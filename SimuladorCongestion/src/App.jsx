@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { Moon, Sun, Play, Pause, RefreshCw, Activity, AlertTriangle, CheckCircle, Calculator } from 'lucide-react';
 
@@ -19,7 +19,6 @@ function App() {
   
   // Estado dinámico
   const [data, setData] = useState([]);
-  const [time, setTime] = useState(0);
   const [droppedTailDrop, setDroppedTailDrop] = useState(0);
   const [droppedAQM, setDroppedAQM] = useState(0); // Descartes preventivos
   const [aqmStatus, setAqmStatus] = useState('stable');
@@ -27,8 +26,20 @@ function App() {
   // Valores instantáneos para telemetría
   const [telemetry, setTelemetry] = useState({ q: 0, prevQ: 0, dq: 0, pDrop: 0 });
 
+  // Refs para el motor de simulación (evita re-renders en cascada)
+  const dataRef = useRef([]);
+  const dropsTdRef = useRef(0);
+  const dropsAqmRef = useRef(0);
+  const timeRef = useRef(0);
+  const configRefs = useRef({ baseLambda, mu, qMax, aqmEnabled, dqThreshold });
+
   const currentQ = data.length > 0 ? data[data.length - 1].q : 0;
   const currentDq = data.length > 0 ? data[data.length - 1].dq : 0;
+
+  // Sincronizar configuración con refs
+  useEffect(() => {
+    configRefs.current = { baseLambda, mu, qMax, aqmEnabled, dqThreshold };
+  }, [baseLambda, mu, qMax, aqmEnabled, dqThreshold]);
 
   // Manejo del tema
   useEffect(() => {
@@ -44,94 +55,91 @@ function App() {
     if (!isRunning) return;
 
     const interval = setInterval(() => {
-      setTime(t => {
-        const newTime = t + TICK_SEC;
-        
-        setData(prevData => {
-          const lastQ = prevData.length > 0 ? prevData[prevData.length - 1].q : 0;
-          
-          // 1. Modelo Fluido Inicial: Q_temp = Q(t) + (lambda_base - mu) * dt
-          let incomingPotential = baseLambda * TICK_SEC;
-          let processed = mu * TICK_SEC;
-          let expectedQ = lastQ + incomingPotential - processed;
-          
-          // 2. Cálculo Explícito de la Derivada dQ/dt
-          // Usamos expectedQ para predecir la tendencia antes de que colapse
-          let dq = (expectedQ - lastQ) / TICK_SEC;
+      const cfg = configRefs.current;
+      timeRef.current += TICK_SEC;
+      
+      let prevData = dataRef.current;
+      const lastQ = prevData.length > 0 ? prevData[prevData.length - 1].q : 0;
+      
+      // 1. Calculamos potencial de paquetes entrantes y salientes
+      let incomingPotential = cfg.baseLambda * TICK_SEC;
+      let processed = cfg.mu * TICK_SEC;
+      
+      // Calculamos Q como si no hubiera AQM para estimar la derivada pura
+      let qNatural = lastQ + incomingPotential - processed;
+      if (qNatural > cfg.qMax) qNatural = cfg.qMax;
+      if (qNatural < 0) qNatural = 0;
 
-          // 3. Algoritmo RED (Random Early Detection) con Derivadas
-          let status = 'stable';
-          let pDrop = 0; // Probabilidad de descarte preventivo (0 a 1)
-          let droppedAqmNow = 0;
+      // 2. Cálculo Explícito de la Derivada dQ/dt natural
+      let dq = (qNatural - lastQ) / TICK_SEC;
 
-          if (aqmEnabled) {
-            // Evaluamos el bloque if/else según la pauta
-            if (dq > dqThreshold && lastQ > qMax * 0.2) {
-              // "positiva y alta" -> congestionando rápidamente
-              status = 'warning';
-              // La probabilidad de descarte escala matemáticamente con la derivada (k * dq)
-              // k = 0.05 por ejemplo
-              pDrop = Math.min(0.9, 0.05 * (dq - dqThreshold)); 
-              
-              // Aplicamos el descarte preventivo probabilístico a los paquetes entrantes
-              droppedAqmNow = incomingPotential * pDrop;
-            } else if (dq <= 0) {
-               // Tráfico estable
-               pDrop = 0;
-            }
-          }
+      // 3. Algoritmo RED (Random Early Detection) con Derivadas
+      let status = 'stable';
+      let pDrop = 0; // Probabilidad de descarte preventivo (0 a 1)
+      let droppedAqmNow = 0;
 
-          // Los paquetes que logran entrar a la cola (Tasa Efectiva)
-          let incomingActual = incomingPotential - droppedAqmNow;
-          
-          // Recalculamos la nueva Q real (Modelo continuo a trozos)
-          let newQ = lastQ + incomingActual - processed;
+      if (cfg.aqmEnabled) {
+        if (dq > cfg.dqThreshold && lastQ > cfg.qMax * 0.1) {
+          // "positiva y alta" -> congestionando rápidamente
+          status = 'warning';
+          // Probabilidad de descarte escala matemáticamente con la derivada
+          pDrop = Math.min(0.9, 0.05 * (dq - cfg.dqThreshold)); 
+          droppedAqmNow = incomingPotential * pDrop;
+        }
+      }
 
-          if (droppedAqmNow > 0) {
-            setDroppedAQM(prev => prev + droppedAqmNow);
-          }
+      // Los paquetes que logran entrar a la cola (Tasa Efectiva)
+      let incomingActual = incomingPotential - droppedAqmNow;
+      
+      // 4. Recalculamos la nueva Q real (Modelo continuo a trozos)
+      let newQ = lastQ + incomingActual - processed;
 
-          setAqmStatus(status);
-          setTelemetry({ q: newQ, prevQ: lastQ, dq: dq, pDrop: pDrop });
+      // 5. Políticas de Descarte Físico (Tail Drop - Discontinuidad)
+      let droppedTdNow = 0;
+      if (newQ > cfg.qMax) {
+        droppedTdNow = newQ - cfg.qMax;
+        newQ = cfg.qMax; // Discontinuidad matemática: se capa el valor abruptamente
+      }
+      if (newQ < 0) newQ = 0;
 
-          // 4. Políticas de Descarte (Tail Drop - Discontinuidad)
-          let droppedTdNow = 0;
-          if (newQ > qMax) {
-            droppedTdNow = newQ - qMax;
-            newQ = qMax; // Discontinuidad matemática: se capa el valor abruptamente
-          }
-          if (newQ < 0) newQ = 0;
+      // Derivada final real tras aplicar políticas
+      let finalDq = (newQ - lastQ) / TICK_SEC;
 
-          if (droppedTdNow > 0) {
-            setDroppedTailDrop(prev => prev + droppedTdNow);
-          }
+      // Actualizar Refs de acumuladores
+      if (droppedAqmNow > 0) dropsAqmRef.current += droppedAqmNow;
+      if (droppedTdNow > 0) dropsTdRef.current += droppedTdNow;
 
-          const newDataPoint = {
-            time: Number(newTime.toFixed(1)),
-            q: Number(newQ.toFixed(1)),
-            dq: Number(dq.toFixed(1)),
-            droppedTD: droppedTdNow,
-            droppedAQM: droppedAqmNow
-          };
+      // Actualizar el historial
+      const newDataPoint = {
+        time: Number(timeRef.current.toFixed(1)),
+        q: Number(newQ.toFixed(1)),
+        dq: Number(finalDq.toFixed(1))
+      };
 
-          const newData = [...prevData, newDataPoint];
-          if (newData.length > MAX_DATA_POINTS) {
-            newData.shift();
-          }
-          
-          return newData;
-        });
+      const newData = [...prevData, newDataPoint];
+      if (newData.length > MAX_DATA_POINTS) {
+        newData.shift();
+      }
+      dataRef.current = newData;
 
-        return newTime;
-      });
+      // Actualizar React State de golpe (Batching)
+      setData(newData);
+      setDroppedAQM(dropsAqmRef.current);
+      setDroppedTailDrop(dropsTdRef.current);
+      setAqmStatus(status);
+      setTelemetry({ q: newQ, prevQ: lastQ, dq: finalDq, pDrop: pDrop });
+
     }, TICK_MS);
 
     return () => clearInterval(interval);
-  }, [isRunning, baseLambda, mu, qMax, aqmEnabled, dqThreshold]);
+  }, [isRunning]);
 
   const resetSimulation = () => {
+    dataRef.current = [];
+    dropsTdRef.current = 0;
+    dropsAqmRef.current = 0;
+    timeRef.current = 0;
     setData([]);
-    setTime(0);
     setDroppedTailDrop(0);
     setDroppedAQM(0);
     setAqmStatus('stable');
