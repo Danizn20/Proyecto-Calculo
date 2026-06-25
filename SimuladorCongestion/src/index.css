@@ -244,3 +244,12 @@ body {
   color: var(--text-primary);
   margin-top: 5px;
 }
+
+.math-telemetry { background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 8px; font-family: 'Courier New', Courier, monospace; font-size: 0.9rem; margin-top: 15px; border: 1px solid #333; overflow-x: auto; }
+.math-telemetry .keyword { color: #569cd6; }
+.math-telemetry .variable { color: #9cdcfe; }
+.math-telemetry .number { color: #b5cea8; }
+.math-telemetry .operator { color: #d4d4d4; }
+.math-telemetry .comment { color: #6a9955; }
+.math-telemetry .highlight-active { background-color: rgba(255, 255, 0, 0.2); padding: 2px 4px; border-radius: 4px; border-left: 3px solid #eab308; }
+.math-telemetry pre { margin: 0; }

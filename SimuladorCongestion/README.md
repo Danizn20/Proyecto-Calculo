@@ -13,11 +13,14 @@ Este proyecto fue desarrollado utilizando un stack moderno para el desarrollo fr
 - **JavaScript (ES6+)**: Lenguaje principal de la lógica de simulación matemática continua, cálculo de algoritmos y actualización de tasas por segundo.
 - **CSS3 Avanzado**: Estilos personalizados que incluyen el soporte nativo para **Modo Claro / Modo Oscuro** utilizando variables CSS (`:root`), Grid/Flexbox para diseño responsivo y micro-animaciones fluidas.
 
-## 💡 Características Principales
+## 💡 Características Principales y Modelado Matemático
 
-1. **Modelo de Continuidad (Tail Drop)**: Simulación de la acumulación de paquetes y límite de memoria estricto donde ocurre la pérdida matemática (paquetes descartados).
-2. **Algoritmo de Control Activo (AQM)**: Lectura en tiempo real de la derivada $dQ/dt$. Si la cola de memoria crece rápidamente de manera sostenida, el sistema toma medidas preventivas disminuyendo la velocidad de entrada, simulando el comportamiento de reducción de ventana de TCP.
-3. **Simulación en Tiempo Real**: Bucle de 500ms simulando la carga real del sistema y reflejando inmediatamente los cambios introducidos por el usuario mediante los paneles de control interactivos.
+1. **Modelo de Continuidad (Tail Drop)**: Simulación de la acumulación de paquetes y límite de memoria estricto donde ocurre la pérdida matemática (paquetes descartados por exceso).
+2. **Algoritmo de Control RED (Random Early Detection)**: Una implementación completa del protocolo RED usando derivadas.
+   - **Cálculo de Derivada**: El sistema lee en tiempo real $\frac{dQ}{dt} = \frac{Q_t - Q_{t-1}}{\Delta t}$.
+   - **Descarte Preventivo Probabilístico**: Si la derivada supera el **"Umbral Crítico"**, significa que la red se está congestionando rápidamente. El sistema reacciona calculando una Probabilidad de Descarte $P_{drop} = k \cdot (dQ/dt - umbral)$, descartando paquetes proactivamente *antes* de que la memoria se llene.
+3. **Telemetría Matemática en Vivo**: Un panel interactivo tipo "pizarra de código" que expone exactamente cómo las matemáticas están gobernando el simulador. Muestra las variables calculadas en tiempo real y resalta qué condición del bloque lógico (`if dQ/dt > umbral` vs `else if dQ/dt <= 0`) se está ejecutando.
+4. **Simulación Dinámica**: Bucle de alta frecuencia reflejando inmediatamente los cambios introducidos por el usuario mediante los paneles interactivos.
 
 ## ⚙️ Cómo ejecutar localmente
 
