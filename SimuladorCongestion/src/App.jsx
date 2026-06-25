@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
-import { Moon, Sun, Play, Pause, RefreshCw, Activity, AlertTriangle, CheckCircle, Calculator, Info } from 'lucide-react';
+import { Moon, Sun, Play, Pause, RefreshCw, Activity, AlertTriangle, CheckCircle, Calculator, Info, Wifi, WifiOff } from 'lucide-react';
 
 const TICK_MS = 500;
 const TICK_SEC = TICK_MS / 1000;
@@ -8,18 +8,20 @@ const MAX_DATA_POINTS = 40;
 const CODEL_WINDOW = 20;
 
 function App() {
-  const [theme, setTheme] = useState('light'); // Cambiamos el por defecto a light para mostrar el nuevo modo crema
+  const [theme, setTheme] = useState('light');
   const [isRunning, setIsRunning] = useState(false);
   
-  // Parámetros de la simulación
+  // Parámetros de la simulación manual
   const [baseLambda, setBaseLambda] = useState(50);
   const [mu, setMu] = useState(40);
   const [qMax, setQMax] = useState(100);
   
+  // Integración Red Real
+  const [useRealNetwork, setUseRealNetwork] = useState(false);
+  const [netInfo, setNetInfo] = useState({ downlink: 0, rtt: 0, type: 'unknown', isSupported: false });
+  
   // AQM Selector
   const [aqmAlgorithm, setAqmAlgorithm] = useState('none');
-  
-  // Parámetros
   const [dqThreshold, setDqThreshold] = useState(5); 
   const [targetDelay, setTargetDelay] = useState(0.5); 
   
@@ -29,28 +31,47 @@ function App() {
   const [droppedAQM, setDroppedAQM] = useState(0); 
   const [aqmStatus, setAqmStatus] = useState('stable');
 
-  // Valores instantáneos para telemetría
+  // Telemetría
   const [telemetry, setTelemetry] = useState({ 
-    q: 0, prevQ: 0, dq: 0, pDrop: 0, delay: 0, minDelay: 0, pieError: 0, pieDeriv: 0, count: 0
+    q: 0, prevQ: 0, dq: 0, pDrop: 0, delay: 0, minDelay: 0, pieError: 0, pieDeriv: 0, count: 0,
+    currentLambda: 0, currentMu: 0 // Para visualizar valores reales inyectados
   });
 
-  // Refs para el motor
   const dataRef = useRef([]);
   const dropsTdRef = useRef(0);
   const dropsAqmRef = useRef(0);
   const timeRef = useRef(0);
-  const configRefs = useRef({ baseLambda, mu, qMax, aqmAlgorithm, dqThreshold, targetDelay });
+  const configRefs = useRef({ baseLambda, mu, qMax, aqmAlgorithm, dqThreshold, targetDelay, useRealNetwork, netInfo });
   
-  // Refs internos para algoritmos
   const pieRef = useRef({ pDrop: 0, oldDelay: 0 });
   const codelRef = useRef({ delayWindow: [], dropState: false, dropCount: 0 });
 
   const currentQ = data.length > 0 ? data[data.length - 1].q : 0;
   const currentDq = data.length > 0 ? data[data.length - 1].dq : 0;
 
+  // Escuchar a la Tarjeta de Red del Usuario (Hardware API)
   useEffect(() => {
-    configRefs.current = { baseLambda, mu, qMax, aqmAlgorithm, dqThreshold, targetDelay };
-  }, [baseLambda, mu, qMax, aqmAlgorithm, dqThreshold, targetDelay]);
+    const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (conn) {
+      const updateNetInfo = () => {
+        setNetInfo({
+          downlink: conn.downlink || 0,
+          rtt: conn.rtt || 0,
+          type: conn.effectiveType || 'unknown',
+          isSupported: true
+        });
+      };
+      updateNetInfo();
+      conn.addEventListener('change', updateNetInfo);
+      return () => conn.removeEventListener('change', updateNetInfo);
+    } else {
+      setNetInfo(prev => ({ ...prev, isSupported: false }));
+    }
+  }, []);
+
+  useEffect(() => {
+    configRefs.current = { baseLambda, mu, qMax, aqmAlgorithm, dqThreshold, targetDelay, useRealNetwork, netInfo };
+  }, [baseLambda, mu, qMax, aqmAlgorithm, dqThreshold, targetDelay, useRealNetwork, netInfo]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -70,15 +91,30 @@ function App() {
       let prevData = dataRef.current;
       const lastQ = prevData.length > 0 ? prevData[prevData.length - 1].q : 0;
       
-      let incomingPotential = cfg.baseLambda * TICK_SEC;
-      let processed = cfg.mu * TICK_SEC;
+      // === INYECCIÓN DE DATOS DE RED REAL ===
+      let activeLambda = cfg.baseLambda;
+      let activeMu = cfg.mu;
+
+      if (cfg.useRealNetwork && cfg.netInfo.isSupported) {
+        // Mapeo: Capacidad de Salida = Ancho de banda real de descarga (Downlink)
+        // Escalado: 1 Mbps real ~ 2 pkts/s simulados para visualización
+        activeMu = cfg.netInfo.downlink ? Math.max(20, Math.min(150, cfg.netInfo.downlink * 2)) : 50;
+        
+        // Mapeo: Tráfico Entrante = Variabilidad caótica impulsada por la Latencia Real (Ping RTT)
+        // A mayor latencia en el hogar del usuario, mayor es la ráfaga de tráfico entrante
+        let jitter = (Math.random() - 0.2) * (cfg.netInfo.rtt / 4); // Ruido aleatorio basado en Ping
+        activeLambda = Math.max(10, Math.min(200, activeMu + jitter));
+      }
+
+      let incomingPotential = activeLambda * TICK_SEC;
+      let processed = activeMu * TICK_SEC;
       
       let qNatural = lastQ + incomingPotential - processed;
       if (qNatural > cfg.qMax) qNatural = cfg.qMax;
       if (qNatural < 0) qNatural = 0;
 
       let dq = (qNatural - lastQ) / TICK_SEC;
-      let currentDelay = cfg.mu > 0 ? qNatural / cfg.mu : 0;
+      let currentDelay = activeMu > 0 ? qNatural / activeMu : 0;
 
       let status = 'stable';
       let pDrop = 0; 
@@ -177,7 +213,8 @@ function App() {
       setAqmStatus(status);
       setTelemetry({ 
         q: newQ, prevQ: lastQ, dq: finalDq, pDrop: pDrop, 
-        delay: currentDelay, minDelay: tMinDelay, pieError: tPieError, pieDeriv: tPieDeriv, count: tCount
+        delay: currentDelay, minDelay: tMinDelay, pieError: tPieError, pieDeriv: tPieDeriv, count: tCount,
+        currentLambda: activeLambda, currentMu: activeMu
       });
 
     }, TICK_MS);
@@ -196,19 +233,10 @@ function App() {
     setDroppedTailDrop(0);
     setDroppedAQM(0);
     setAqmStatus('stable');
-    setTelemetry({ q: 0, prevQ: 0, dq: 0, pDrop: 0, delay: 0, minDelay: 0, pieError: 0, pieDeriv: 0, count: 0 });
+    setTelemetry({ q: 0, prevQ: 0, dq: 0, pDrop: 0, delay: 0, minDelay: 0, pieError: 0, pieDeriv: 0, count: 0, currentLambda: 0, currentMu: 0 });
   };
 
   const queuePercentage = Math.min(100, Math.max(0, (currentQ / qMax) * 100));
-
-  const getAlgorithmDescription = () => {
-    switch(aqmAlgorithm) {
-      case 'red': return "Detecta congestión usando la velocidad de llenado (1ra derivada). Bueno para reaccionar a picos repentinos.";
-      case 'pie': return "Usa Control Proporcional-Integral. Evalúa qué tan lejos estamos del objetivo y cómo cambia esa distancia (derivada del error) para ajustarse suavemente.";
-      case 'codel': return "No usa derivadas explícitas, sino una ventana de tiempo. Se asegura de que la cola siempre tenga momentos vacíos, evitando el estancamiento crónico.";
-      default: return "Sin inteligencia. Los paquetes entran hasta que la memoria física se desborda y se pierden datos abruptamente (Tail Drop).";
-    }
-  };
 
   return (
     <div className="app-container">
@@ -244,8 +272,9 @@ function App() {
         <div className="panel" style={{ display: 'flex', flexDirection: 'column', gap: '25px' }}>
           
           <div>
-            <h2>Panel de Control Central
-              <div style={{ display: 'inline-flex', gap: '10px', float: 'right' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{margin: 0}}>Panel de Control</h2>
+              <div style={{ display: 'inline-flex', gap: '10px' }}>
                 <button className="button" onClick={() => setIsRunning(!isRunning)} style={{ padding: '8px 16px' }}>
                   {isRunning ? <Pause size={18} style={{marginRight: '6px'}}/> : <Play size={18} style={{marginRight: '6px'}}/>} 
                   {isRunning ? 'Pausar' : 'Simular'}
@@ -254,19 +283,52 @@ function App() {
                   <RefreshCw size={18} />
                 </button>
               </div>
-            </h2>
-            <p style={{color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '-10px', marginBottom: '20px'}}>
-              Modifica la entrada de datos simulando horas pico de internet.
-            </p>
+            </div>
+
+            {/* INTEGRACIÓN RED REAL */}
+            {netInfo.isSupported && (
+              <div style={{ padding: '15px', borderRadius: '16px', border: '2px solid', borderColor: useRealNetwork ? 'var(--success-color)' : 'var(--border-color)', background: useRealNetwork ? 'rgba(16, 185, 129, 0.05)' : 'transparent', marginBottom: '20px', transition: 'all 0.3s ease' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: useRealNetwork ? 'var(--success-color)' : 'var(--text-primary)' }}>
+                    {useRealNetwork ? <Wifi size={24} /> : <WifiOff size={24} color="var(--text-secondary)" />}
+                    <strong>Sincronizar con Hardware Físico</strong>
+                  </div>
+                  <label className="switch" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                    <input type="checkbox" checked={useRealNetwork} onChange={(e) => setUseRealNetwork(e.target.checked)} style={{ width: '20px', height: '20px', accentColor: 'var(--success-color)' }} />
+                    <span style={{ marginLeft: '10px', fontWeight: 'bold' }}>{useRealNetwork ? 'CONECTADO' : 'MANUAL'}</span>
+                  </label>
+                </div>
+                
+                {useRealNetwork && (
+                  <div style={{ marginTop: '10px', fontSize: '0.9rem', color: 'var(--text-secondary)', display: 'flex', gap: '15px', padding: '10px', background: 'var(--bg-color)', borderRadius: '8px' }}>
+                    <div><strong>Ancho de Banda:</strong> {netInfo.downlink} Mbps</div>
+                    <div><strong>Latencia (Ping):</strong> {netInfo.rtt} ms</div>
+                    <div><strong>Red:</strong> {netInfo.type.toUpperCase()}</div>
+                  </div>
+                )}
+              </div>
+            )}
             
             <div className="control-group">
-              <label>Tráfico Entrante (Descargas/Streaming) <span className="value">{baseLambda} pkts/s</span></label>
-              <input type="range" min="10" max="100" value={baseLambda} onChange={(e) => setBaseLambda(Number(e.target.value))} />
+              <label>
+                Tráfico Entrante (Descargas/Streaming) 
+                <span className="value">
+                  {useRealNetwork && isRunning ? telemetry.currentLambda.toFixed(1) : baseLambda} pkts/s
+                </span>
+              </label>
+              <input type="range" min="10" max="100" value={baseLambda} onChange={(e) => setBaseLambda(Number(e.target.value))} disabled={useRealNetwork} style={{ opacity: useRealNetwork ? 0.4 : 1 }} />
+              {useRealNetwork && <small style={{color:'var(--success-color)'}}>Oscilando dinámicamente según latencia ({netInfo.rtt}ms)</small>}
             </div>
 
             <div className="control-group">
-              <label>Capacidad de Salida del Router <span className="value">{mu} pkts/s</span></label>
-              <input type="range" min="10" max="100" value={mu} onChange={(e) => setMu(Number(e.target.value))} />
+              <label>
+                Capacidad de Salida del Router 
+                <span className="value">
+                  {useRealNetwork && isRunning ? telemetry.currentMu.toFixed(1) : mu} pkts/s
+                </span>
+              </label>
+              <input type="range" min="10" max="100" value={mu} onChange={(e) => setMu(Number(e.target.value))} disabled={useRealNetwork} style={{ opacity: useRealNetwork ? 0.4 : 1 }} />
+              {useRealNetwork && <small style={{color:'var(--success-color)'}}>Limitado por ancho de banda físico ({netInfo.downlink} Mbps)</small>}
             </div>
 
             <div className="control-group">
@@ -303,10 +365,6 @@ function App() {
                 <option value="pie">PIE (Prop-Integral)</option>
                 <option value="codel">CoDel (Tiempo de Vida)</option>
               </select>
-            </div>
-            <div style={{fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '20px', display: 'flex', gap: '8px', alignItems: 'flex-start'}}>
-              <Info size={16} style={{flexShrink: 0, marginTop: '2px'}}/>
-              <span>{getAlgorithmDescription()}</span>
             </div>
 
             {aqmAlgorithm !== 'none' && (
