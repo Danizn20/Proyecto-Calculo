@@ -136,17 +136,17 @@ function App() {
 
       <div className="metrics">
         <div className="metric-card">
-          <div className="label">Tamaño de Cola Q(t)</div>
+          <div className="label">Paquetes en Espera (Tamaño Q)</div>
           <div className="value">{currentQ.toFixed(1)} / {qMax}</div>
         </div>
         <div className="metric-card">
-          <div className="label">Derivada dQ/dt</div>
+          <div className="label">Velocidad de Llenado (Derivada dQ/dt)</div>
           <div className="value" style={{ color: currentDq > 5 ? 'var(--danger-color)' : 'var(--text-primary)' }}>
             {currentDq > 0 ? '+' : ''}{currentDq.toFixed(1)}
           </div>
         </div>
         <div className="metric-card">
-          <div className="label">Paquetes Descartados (Tail Drop)</div>
+          <div className="label">Paquetes Perdidos (Memoria Llena)</div>
           <div className="value" style={{ color: droppedPackets > 0 ? 'var(--danger-color)' : 'var(--text-primary)' }}>
             {droppedPackets.toFixed(0)}
           </div>
@@ -168,18 +168,18 @@ function App() {
           </h2>
           
           <div className="control-group">
-            <label>Tasa de Llegada Base (λ) [Paquetes/s] <span className="value">{baseLambda}</span></label>
+            <label>Velocidad de Entrada de Datos (λ) <span className="value">{baseLambda} pkts/s</span></label>
             <input type="range" min="10" max="100" value={baseLambda} onChange={(e) => setBaseLambda(Number(e.target.value))} />
-            <small style={{ color: 'var(--text-secondary)' }}>Tasa Efectiva: {effectiveLambda.toFixed(1)} pkts/s</small>
+            <small style={{ color: 'var(--text-secondary)' }}>Velocidad Real (ajustada por el router): {effectiveLambda.toFixed(1)} pkts/s</small>
           </div>
 
           <div className="control-group">
-            <label>Tasa de Procesamiento (μ) [Paquetes/s] <span className="value">{mu}</span></label>
+            <label>Velocidad de Procesamiento del Router (μ) <span className="value">{mu} pkts/s</span></label>
             <input type="range" min="10" max="100" value={mu} onChange={(e) => setMu(Number(e.target.value))} />
           </div>
 
           <div className="control-group">
-            <label>Capacidad Máxima de Cola (Q_max) <span className="value">{qMax}</span></label>
+            <label>Memoria Máxima del Enrutador (Capacidad Q) <span className="value">{qMax} pkts</span></label>
             <input type="range" min="50" max="200" value={qMax} onChange={(e) => setQMax(Number(e.target.value))} />
           </div>
 
@@ -187,8 +187,8 @@ function App() {
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
-              <h3 style={{ margin: '0 0 5px 0' }}>Algoritmo AQM (Derivadas)</h3>
-              <small style={{ color: 'var(--text-secondary)' }}>Prevención de congestión activa</small>
+              <h3 style={{ margin: '0 0 5px 0' }}>Protección Inteligente (AQM)</h3>
+              <small style={{ color: 'var(--text-secondary)' }}>Control activo usando derivadas matemáticas</small>
             </div>
             <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
               <input 
@@ -204,17 +204,17 @@ function App() {
           {aqmEnabled && (
             <div style={{ marginTop: '15px', padding: '10px', background: 'var(--bg-color)', borderRadius: '8px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '5px' }}>
-                <Activity size={18} /> <strong>Estado AQM:</strong> 
+                <Activity size={18} /> <strong>Estado del Sistema:</strong> 
                 <span className={`aqm-status ${aqmStatus}`}>
                   {aqmStatus === 'stable' ? (
                     <><CheckCircle size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: '4px' }}/> Tráfico Estable</>
                   ) : (
-                    <><AlertTriangle size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: '4px' }}/> Reducción Preventiva (Congestión)</>
+                    <><AlertTriangle size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: '4px' }}/> Frenando Tráfico (Congestión Inminente)</>
                   )}
                 </span>
               </div>
               <small style={{ color: 'var(--text-secondary)' }}>
-                Si dQ/dt es alta y la cola está llena al 30%, el enrutador notifica a la fuente TCP para que baje su velocidad (λ), evitando el descarte Tail Drop.
+                Si la memoria se llena muy rápido (derivada alta), el sistema le pide a las computadoras que envíen datos más despacio, evitando así que los paquetes se pierdan.
               </small>
             </div>
           )}
@@ -232,7 +232,7 @@ function App() {
         <div className="panel" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           
           <div style={{ flex: 1 }}>
-            <h2>Tamaño de la Cola Q(t)</h2>
+            <h2>Cantidad de Paquetes en Espera (Q)</h2>
             <div className="chart-container" style={{ height: '220px' }}>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={data}>
@@ -249,7 +249,7 @@ function App() {
           </div>
 
           <div style={{ flex: 1 }}>
-            <h2>Derivada dQ/dt</h2>
+            <h2>Velocidad a la que se llena la memoria (Derivada)</h2>
             <div className="chart-container" style={{ height: '220px' }}>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={data}>
