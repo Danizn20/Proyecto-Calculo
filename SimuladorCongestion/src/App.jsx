@@ -16,9 +16,9 @@ function App() {
   const [mu, setMu] = useState(40);
   const [qMax, setQMax] = useState(100);
   
-  // Integración Red Real
+  // Integración Red Real / Simulada
   const [useRealNetwork, setUseRealNetwork] = useState(false);
-  const [netInfo, setNetInfo] = useState({ downlink: 0, rtt: 0, type: 'unknown', isSupported: false });
+  const [netInfo, setNetInfo] = useState({ downlink: 50, rtt: 35, type: '4g', isRealApi: false });
   
   // AQM Selector
   const [aqmAlgorithm, setAqmAlgorithm] = useState('none');
@@ -34,7 +34,7 @@ function App() {
   // Telemetría
   const [telemetry, setTelemetry] = useState({ 
     q: 0, prevQ: 0, dq: 0, pDrop: 0, delay: 0, minDelay: 0, pieError: 0, pieDeriv: 0, count: 0,
-    currentLambda: 0, currentMu: 0 // Para visualizar valores reales inyectados
+    currentLambda: 0, currentMu: 0 
   });
 
   const dataRef = useRef([]);
@@ -49,23 +49,51 @@ function App() {
   const currentQ = data.length > 0 ? data[data.length - 1].q : 0;
   const currentDq = data.length > 0 ? data[data.length - 1].dq : 0;
 
-  // Escuchar a la Tarjeta de Red del Usuario (Hardware API)
+  // Escuchar a la Tarjeta de Red del Usuario o crear un Emulador realista
   useEffect(() => {
     const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-    if (conn) {
+    
+    if (conn && conn.downlink !== undefined) {
+      // Soporte API Real
       const updateNetInfo = () => {
         setNetInfo({
-          downlink: conn.downlink || 0,
-          rtt: conn.rtt || 0,
-          type: conn.effectiveType || 'unknown',
-          isSupported: true
+          downlink: conn.downlink || 50,
+          rtt: conn.rtt || 40,
+          type: conn.effectiveType || 'wifi',
+          isRealApi: true
         });
       };
       updateNetInfo();
       conn.addEventListener('change', updateNetInfo);
       return () => conn.removeEventListener('change', updateNetInfo);
     } else {
-      setNetInfo(prev => ({ ...prev, isSupported: false }));
+      // Fallback: Si el navegador no soporta la API (como Firefox/Safari),
+      // Creamos un emulador de fluctuaciones de red en tiempo real.
+      const pseudoNetworkInterval = setInterval(() => {
+        setNetInfo(prev => {
+          // Fluctuación aleatoria estocástica simulando red real
+          const jitterDownlink = (Math.random() - 0.5) * 5; // Cambia +- 2.5 Mbps
+          const jitterRtt = (Math.random() - 0.5) * 20; // Cambia +- 10 ms
+          
+          let newDownlink = prev.downlink + jitterDownlink;
+          let newRtt = prev.rtt + jitterRtt;
+          
+          // Mantener dentro de rangos realistas
+          if (newDownlink < 10) newDownlink = 10;
+          if (newDownlink > 100) newDownlink = 100;
+          if (newRtt < 10) newRtt = 10;
+          if (newRtt > 200) newRtt = 200;
+          
+          return {
+            downlink: Number(newDownlink.toFixed(1)),
+            rtt: Math.floor(newRtt),
+            type: newRtt > 100 ? '3g (Emulado)' : 'Fibra/4G (Emulado)',
+            isRealApi: false
+          };
+        });
+      }, 2000); // Actualiza cada 2 segundos
+      
+      return () => clearInterval(pseudoNetworkInterval);
     }
   }, []);
 
@@ -91,19 +119,17 @@ function App() {
       let prevData = dataRef.current;
       const lastQ = prevData.length > 0 ? prevData[prevData.length - 1].q : 0;
       
-      // === INYECCIÓN DE DATOS DE RED REAL ===
+      // === INYECCIÓN DE DATOS DE RED REAL O EMULADA ===
       let activeLambda = cfg.baseLambda;
       let activeMu = cfg.mu;
 
-      if (cfg.useRealNetwork && cfg.netInfo.isSupported) {
-        // Mapeo: Capacidad de Salida = Ancho de banda real de descarga (Downlink)
-        // Escalado: 1 Mbps real ~ 2 pkts/s simulados para visualización
-        activeMu = cfg.netInfo.downlink ? Math.max(20, Math.min(150, cfg.netInfo.downlink * 2)) : 50;
+      if (cfg.useRealNetwork) {
+        // Mapeo: Capacidad de Salida = Ancho de banda (Downlink)
+        activeMu = Math.max(20, Math.min(150, cfg.netInfo.downlink * 1.5));
         
-        // Mapeo: Tráfico Entrante = Variabilidad caótica impulsada por la Latencia Real (Ping RTT)
-        // A mayor latencia en el hogar del usuario, mayor es la ráfaga de tráfico entrante
-        let jitter = (Math.random() - 0.2) * (cfg.netInfo.rtt / 4); // Ruido aleatorio basado en Ping
-        activeLambda = Math.max(10, Math.min(200, activeMu + jitter));
+        // Mapeo: Tráfico Entrante = Variabilidad caótica impulsada por la Latencia (Ping RTT)
+        let jitter = (Math.random() - 0.2) * (cfg.netInfo.rtt / 3); 
+        activeLambda = Math.max(10, Math.min(200, activeMu + jitter + 5)); // Tendencia a congestionarse levemente
       }
 
       let incomingPotential = activeLambda * TICK_SEC;
@@ -238,6 +264,15 @@ function App() {
 
   const queuePercentage = Math.min(100, Math.max(0, (currentQ / qMax) * 100));
 
+  const getAlgorithmDescription = () => {
+    switch(aqmAlgorithm) {
+      case 'red': return "Detecta congestión usando la velocidad de llenado (1ra derivada). Bueno para reaccionar a picos repentinos.";
+      case 'pie': return "Usa Control Proporcional-Integral. Evalúa qué tan lejos estamos del objetivo y cómo cambia esa distancia (derivada del error) para ajustarse suavemente.";
+      case 'codel': return "No usa derivadas explícitas, sino una ventana de tiempo. Se asegura de que la cola siempre tenga momentos vacíos, evitando el estancamiento crónico.";
+      default: return "Sin inteligencia. Los paquetes entran hasta que la memoria física se desborda y se pierden datos abruptamente (Tail Drop).";
+    }
+  };
+
   return (
     <div className="app-container">
       <header className="header">
@@ -285,29 +320,30 @@ function App() {
               </div>
             </div>
 
-            {/* INTEGRACIÓN RED REAL */}
-            {netInfo.isSupported && (
-              <div style={{ padding: '15px', borderRadius: '16px', border: '2px solid', borderColor: useRealNetwork ? 'var(--success-color)' : 'var(--border-color)', background: useRealNetwork ? 'rgba(16, 185, 129, 0.05)' : 'transparent', marginBottom: '20px', transition: 'all 0.3s ease' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: useRealNetwork ? 'var(--success-color)' : 'var(--text-primary)' }}>
-                    {useRealNetwork ? <Wifi size={24} /> : <WifiOff size={24} color="var(--text-secondary)" />}
-                    <strong>Sincronizar con Hardware Físico</strong>
+            {/* INTEGRACIÓN RED REAL / EMULADA */}
+            <div style={{ padding: '15px', borderRadius: '16px', border: '2px solid', borderColor: useRealNetwork ? 'var(--success-color)' : 'var(--border-color)', background: useRealNetwork ? 'rgba(16, 185, 129, 0.05)' : 'transparent', marginBottom: '20px', transition: 'all 0.3s ease' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: useRealNetwork ? 'var(--success-color)' : 'var(--text-primary)' }}>
+                  {useRealNetwork ? <Wifi size={24} /> : <WifiOff size={24} color="var(--text-secondary)" />}
+                  <div>
+                    <strong style={{display: 'block'}}>Sincronizar con Hardware Dinámico</strong>
+                    {!netInfo.isRealApi && <small style={{color: 'var(--warning-color)', fontSize: '0.75rem'}}>API No soportada: Usando motor de emulación estocástica</small>}
                   </div>
-                  <label className="switch" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
-                    <input type="checkbox" checked={useRealNetwork} onChange={(e) => setUseRealNetwork(e.target.checked)} style={{ width: '20px', height: '20px', accentColor: 'var(--success-color)' }} />
-                    <span style={{ marginLeft: '10px', fontWeight: 'bold' }}>{useRealNetwork ? 'CONECTADO' : 'MANUAL'}</span>
-                  </label>
                 </div>
-                
-                {useRealNetwork && (
-                  <div style={{ marginTop: '10px', fontSize: '0.9rem', color: 'var(--text-secondary)', display: 'flex', gap: '15px', padding: '10px', background: 'var(--bg-color)', borderRadius: '8px' }}>
-                    <div><strong>Ancho de Banda:</strong> {netInfo.downlink} Mbps</div>
-                    <div><strong>Latencia (Ping):</strong> {netInfo.rtt} ms</div>
-                    <div><strong>Red:</strong> {netInfo.type.toUpperCase()}</div>
-                  </div>
-                )}
+                <label className="switch" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                  <input type="checkbox" checked={useRealNetwork} onChange={(e) => setUseRealNetwork(e.target.checked)} style={{ width: '20px', height: '20px', accentColor: 'var(--success-color)' }} />
+                  <span style={{ marginLeft: '10px', fontWeight: 'bold' }}>{useRealNetwork ? 'CONECTADO' : 'MANUAL'}</span>
+                </label>
               </div>
-            )}
+              
+              {useRealNetwork && (
+                <div style={{ marginTop: '10px', fontSize: '0.9rem', color: 'var(--text-secondary)', display: 'flex', gap: '15px', padding: '10px', background: 'var(--bg-color)', borderRadius: '8px' }}>
+                  <div><strong>Ancho de Banda:</strong> {netInfo.downlink} Mbps</div>
+                  <div><strong>Latencia (Ping):</strong> {netInfo.rtt} ms</div>
+                  <div><strong>Red:</strong> {netInfo.type.toUpperCase()}</div>
+                </div>
+              )}
+            </div>
             
             <div className="control-group">
               <label>
@@ -328,7 +364,7 @@ function App() {
                 </span>
               </label>
               <input type="range" min="10" max="100" value={mu} onChange={(e) => setMu(Number(e.target.value))} disabled={useRealNetwork} style={{ opacity: useRealNetwork ? 0.4 : 1 }} />
-              {useRealNetwork && <small style={{color:'var(--success-color)'}}>Limitado por ancho de banda físico ({netInfo.downlink} Mbps)</small>}
+              {useRealNetwork && <small style={{color:'var(--success-color)'}}>Limitado por ancho de banda ({netInfo.downlink} Mbps)</small>}
             </div>
 
             <div className="control-group">
@@ -365,6 +401,10 @@ function App() {
                 <option value="pie">PIE (Prop-Integral)</option>
                 <option value="codel">CoDel (Tiempo de Vida)</option>
               </select>
+            </div>
+            <div style={{fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '20px', display: 'flex', gap: '8px', alignItems: 'flex-start'}}>
+              <Info size={16} style={{flexShrink: 0, marginTop: '2px'}}/>
+              <span>{getAlgorithmDescription()}</span>
             </div>
 
             {aqmAlgorithm !== 'none' && (
