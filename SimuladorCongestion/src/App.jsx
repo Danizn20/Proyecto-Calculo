@@ -252,7 +252,7 @@ function App() {
                   <strong style={{ color: 'var(--danger-color)', display: 'block', marginBottom: '5px' }}>Paquetes Descartados Preventivamente (RED):</strong>
                   <span style={{ fontSize: '1.2rem', fontWeight: 'bold', color: 'var(--danger-color)' }}>{droppedAQM.toFixed(1)} pkts</span>
                   <small style={{ display: 'block', color: 'var(--text-secondary)', marginTop: '5px' }}>
-                    Probabilidad de descarte actual ($P_{{drop}}$): <strong>{(telemetry.pDrop * 100).toFixed(1)}%</strong>
+                    Probabilidad de descarte actual (P_drop): <strong>{(telemetry.pDrop * 100).toFixed(1)}%</strong>
                   </small>
                 </div>
 
