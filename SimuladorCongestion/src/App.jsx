@@ -352,7 +352,7 @@ function App() {
 <span className="keyword">let</span> <span className="variable">dQ_dt</span> = <span className="number">{telemetry.dq.toFixed(1)}</span>;
 
 <div className={telemetry.dq > dqThreshold ? 'highlight-active' : ''}><span className="keyword">if</span> (<span className="variable">dQ_dt</span> &gt; <span className="variable">umbral</span> ({dqThreshold})) {'{'}
-  <span className="comment">// Derivada Alta -> Crecimiento rápido</span>
+  <span className="comment">// Derivada Alta -&gt; Crecimiento rápido</span>
   <span className="variable">P_drop</span> = k * (dQ_dt - umbral);
 {'}'}</div><div className={telemetry.dq <= 0 ? 'highlight-active' : ''}><span className="keyword">else</span> {'{'} <span className="variable">P_drop</span> = 0; {'}'}</div>
 </>
