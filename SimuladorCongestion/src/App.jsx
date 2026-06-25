@@ -270,7 +270,7 @@ function App() {
 <span className="comment">// dQ_dt = {telemetry.dq.toFixed(1)} pkts/s</span>
 
 <span className="comment">// 2. Lógica del Algoritmo de Control (RED)</span>
-<div className={telemetry.dq > dqThreshold ? 'highlight-active' : ''}><span className="keyword">if</span> (<span className="variable">dQ_dt</span> > <span className="variable">umbral_crítico</span> ({dqThreshold})) {'{'}
+<div className={telemetry.dq > dqThreshold ? 'highlight-active' : ''}><span className="keyword">if</span> (<span className="variable">dQ_dt</span> &gt; <span className="variable">umbral_crítico</span> ({dqThreshold})) {'{'}
   <span className="comment">// Derivada "positiva y alta" -> Congestión</span>
   <span className="variable">P_drop</span> = k * (dQ_dt - umbral); <span className="comment">// {(telemetry.pDrop*100).toFixed(1)}%</span>
   descartarPreventivamente(P_drop);
