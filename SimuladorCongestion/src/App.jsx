@@ -54,7 +54,7 @@ function App() {
     const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
     
     if (conn && conn.downlink !== undefined) {
-      // Soporte API Real
+      // Soporte API Real nativa
       const updateNetInfo = () => {
         setNetInfo({
           downlink: conn.downlink || 50,
@@ -67,33 +67,40 @@ function App() {
       conn.addEventListener('change', updateNetInfo);
       return () => conn.removeEventListener('change', updateNetInfo);
     } else {
-      // Fallback: Si el navegador no soporta la API (como Firefox/Safari),
-      // Creamos un emulador de fluctuaciones de red en tiempo real.
-      const pseudoNetworkInterval = setInterval(() => {
-        setNetInfo(prev => {
-          // Fluctuación aleatoria estocástica simulando red real
-          const jitterDownlink = (Math.random() - 0.5) * 5; // Cambia +- 2.5 Mbps
-          const jitterRtt = (Math.random() - 0.5) * 20; // Cambia +- 10 ms
-          
-          let newDownlink = prev.downlink + jitterDownlink;
-          let newRtt = prev.rtt + jitterRtt;
-          
-          // Mantener dentro de rangos realistas
-          if (newDownlink < 10) newDownlink = 10;
-          if (newDownlink > 100) newDownlink = 100;
-          if (newRtt < 10) newRtt = 10;
-          if (newRtt > 200) newRtt = 200;
-          
-          return {
-            downlink: Number(newDownlink.toFixed(1)),
-            rtt: Math.floor(newRtt),
-            type: newRtt > 100 ? '3g (Emulado)' : 'Fibra/4G (Emulado)',
-            isRealApi: false
-          };
-        });
-      }, 2000); // Actualiza cada 2 segundos
+      // Fallback Avanzado: Medir el Ping real haciendo peticiones HTTP invisibles
+      // y emular el Ancho de Banda basado en ese Ping físico.
+      let currentDownlink = 50;
       
-      return () => clearInterval(pseudoNetworkInterval);
+      const measureRealPing = async () => {
+        const start = performance.now();
+        try {
+          // Petición ligera a un servidor global (Cloudflare) para medir latencia real
+          await fetch('https://1.1.1.1/cdn-cgi/trace?t=' + Date.now(), { mode: 'no-cors', cache: 'no-store' });
+          const end = performance.now();
+          const realPing = Math.floor(end - start);
+          
+          setNetInfo(prev => {
+            // Emulamos el ancho de banda, pero la fluctuación se ancla al PING REAL
+            const jitterDownlink = (Math.random() - 0.5) * (realPing / 10);
+            currentDownlink = Math.max(10, Math.min(100, currentDownlink + jitterDownlink));
+            
+            return {
+              downlink: Number(currentDownlink.toFixed(1)),
+              rtt: realPing,
+              type: realPing < 50 ? 'Fibra/Wi-Fi' : '4G/Inestable',
+              isRealApi: false // Es una mezcla: Ping real, Mbps emulado
+            };
+          });
+        } catch (e) {
+          // Si no hay internet, fallback estocástico
+          setNetInfo(prev => ({ ...prev, rtt: prev.rtt + (Math.random() - 0.5) * 20 }));
+        }
+      };
+
+      measureRealPing();
+      const pingInterval = setInterval(measureRealPing, 2000);
+      
+      return () => clearInterval(pingInterval);
     }
   }, []);
 
